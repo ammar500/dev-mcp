@@ -1,0 +1,76 @@
+{
+  "python": "3.12.3",
+  "platform": "Linux-6.8.0-146-generic-x86_64-with-glibc2.39",
+  "limits": {
+    "port": 60579,
+    "package_bytes": 268435456,
+    "package_files": 4096,
+    "storage_bytes": 2147483648,
+    "file_workers": 2,
+    "waiting_operations": 16
+  },
+  "units": "MiB from Linux /proc RSS/HWM counters; peak sampled every 20 ms",
+  "samples": {
+    "empty_service_idle": {
+      "VmHWM": 71.37,
+      "VmRSS": 71.37
+    },
+    "warmed_two_clients_idle": {
+      "VmHWM": 71.91,
+      "VmRSS": 71.91
+    },
+    "after_10_small_sessions": {
+      "VmHWM": 72.19,
+      "VmRSS": 72.19
+    },
+    "after_50_small_sessions": {
+      "VmHWM": 72.45,
+      "VmRSS": 72.45
+    },
+    "after_100_small_sessions": {
+      "VmHWM": 72.55,
+      "VmRSS": 72.55
+    },
+    "after_two_128MiB_packages": {
+      "VmHWM": 76.32,
+      "VmRSS": 76.32
+    },
+    "after_128MiB_binary_publication": {
+      "VmHWM": 76.36,
+      "VmRSS": 76.36
+    },
+    "after_40_more_small_sessions": {
+      "VmHWM": 75.43,
+      "VmRSS": 72.62
+    },
+    "http_with_two_stdio_processes": {
+      "VmHWM": 75.43,
+      "VmRSS": 72.62
+    },
+    "after_clients_disconnect": {
+      "VmHWM": 75.43,
+      "VmRSS": 72.62
+    }
+  },
+  "two_large_cycles_seconds": 0.92,
+  "two_stdio_compatibility_processes": [
+    {
+      "VmHWM": 71.43,
+      "VmRSS": 71.43
+    },
+    {
+      "VmHWM": 71.53,
+      "VmRSS": 71.53
+    }
+  ],
+  "client_benchmark_process": {
+    "VmHWM": 67.97,
+    "VmRSS": 67.97
+  },
+  "remaining_package_bytes": 0,
+  "consumer_checkouts_unchanged": true,
+  "peak_sampled_during_operations": {
+    "VmRSS": 76.39,
+    "VmHWM": 76.39
+  }
+}

@@ -206,6 +206,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Legacy local dev-mcp artifacts; active runtime state lives outside Git
+.dev-mcp/
+
 # PyPI configuration file
 .pypirc
 
