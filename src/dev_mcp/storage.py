@@ -93,8 +93,9 @@ class Operations:
     bound readers and compatibility processes. No package bytes cross the executor.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, namespace: str = ""):
         self.settings = settings
+        self.namespace = namespace
         self.executor = ThreadPoolExecutor(
             max_workers=settings.file_workers, thread_name_prefix="files"
         )
@@ -103,7 +104,7 @@ class Operations:
 
     def slot(self, prefix: str, count: int) -> int | None:
         for index in range(count):
-            path = self.settings.state / "locks" / f"{prefix}-{index}"
+            path = self.settings.state / "locks" / f"{self.namespace}{prefix}-{index}"
             fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

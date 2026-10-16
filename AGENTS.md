@@ -12,16 +12,19 @@
 
 ## Background runtime
 
-- `dev-mcp serve` runs one loopback Streamable HTTP process at `/mcp`, default port
-  8765. Direct HTTP is the recommended multi-client configuration.
+- `dev-mcp serve` runs one loopback Streamable HTTP process, default port 8765.
+  `/mcp` is the preserved legacy personal skills-only endpoint; `/mcp/<profile>`
+  binds exactly one workspace/profile. Direct HTTP is recommended for multiple clients.
 - HTTP uses a private local bearer token and the SDK's Host/Origin protection.
-  Never log, return or commit credentials. The shared token represents one owner;
-  client/task labels are assertions, not independent authentication.
+  Never log, return or commit credentials. Each profile credential has a fixed scope;
+  the legacy token retains personal skills access only. Client/session labels remain
+  assertions, not individual authentication. Owner CLI alone configures access.
 - `dev-mcp service install|start|stop|status` manages a user-level systemd service.
   Installation enables login startup/restart on failure. Never enable a system-wide
   service or lingering. Never silently start fallback servers for clients.
 - Stdio remains a compatibility transport and starts a separate full process per
-  client. Stdout must stay protocol-only; diagnostics go to stderr.
+  client and requires explicit `--profile NAME` (`legacy` preserves old skill access).
+  Stdout must stay protocol-only; diagnostics go to stderr.
 
 ## Memory and operating cost
 
@@ -34,7 +37,9 @@ cost in architecture discussions and feature work.
   Do not retain completed histories or package bytes in process caches.
 - Default limits: 256 MiB/4,096 files per package, 8,192 filesystem entries,
   2 GiB managed package storage, two file workers and sixteen waiting operations.
-  Shared admission and state locks coordinate HTTP and stdio processes.
+  Shared admission and state locks coordinate HTTP and stdio processes. HTTP profiles
+  share bounded thread pools. Tasks have separate admission/short transaction locks;
+  task operations must not wait behind long skill copies or context imports.
 - Serialize durable filesystem mutations; capacity errors must be actionable.
   Never silently evict active/unfinished work to fit a limit.
 - Refresh catalogue metadata only on demand. No watchers, periodic scans, or
@@ -84,6 +89,56 @@ cost in architecture discussions and feature work.
 - Never automatically stage, commit or push library edits. Delete disposable
   staging only when safe; retain compact audits and discoverable unfinished work.
 
+## Workspaces, tasks, reminders and pause checkpoints
+
+- Keep `access.py`, transport, owner CLI, and `tasks/` feature modules separate.
+  Workspaces have private XDG state databases with WAL and explicit migrations.
+  No credentials belong in databases, tool outputs, logs, or execution specifications;
+  use credential references. Context contents and future logs belong on disk.
+- Scope every operation, ID, history and context read to the authenticated binding.
+  Expose only permitted tools; task-edit permission does not grant delegation/worker
+  access. Worker profiles contain only worker permission. Do not allow scope switches
+  through arguments. Recheck profile revocation/changes for HTTP and stdio operations.
+- Preserve the legacy `/mcp` library, IDs, token and storage paths. Work starts empty;
+  non-personal enabled skill libraries/state are workspace-local. Never auto-migrate.
+  Document that unrestricted same-account filesystem access bypasses MCP boundaries.
+- Task states are open/in_progress/blocked/done/cancelled; archival is separate and
+  reversible. No permanent task deletion. Require request IDs for every task-feature
+  mutation, scoped by workspace/profile/operation, and expected versions for edits.
+  Identical retries return the original result; changed arguments conflict.
+- Task creation/read/claims launch nothing. Existing agents use their own capabilities.
+  Coordinate claims/delegations transactionally; generic edits cannot bypass ownership.
+  Reserve overlapping checkout paths across workspaces. Keep unavailable reservations
+  opaque to other workspaces. No task operation modifies a consuming checkout or Git.
+- Reminders are query-only, task-linked, separately acknowledged/cancelled records.
+  No scheduler/notifications. Require offset timestamps, validate IANA zone/DST,
+  reject unintended past times, preserve UTC interpretation and zone. Default timezone
+  Europe/Berlin. Task due, reminder time and execution not-before remain distinct.
+  Completing/cancelling/archiving cancels pending reminders atomically; restoring does
+  not reactivate them. Reading does not acknowledge or complete anything.
+- Pause checkpoints preserve exact raw notes and optional task/checkout/session links.
+  Corrections create a new note referencing the old one. Never overwrite raw text.
+  Recent unresolved lookup keeps different contexts separate. Reading does not resume;
+  save/resume never changes task state, starts/stops agents, or enqueues work.
+  **Do not inspect API keys, invoke models, or launch normalization agents.** Optional
+  API/agent normalization and proactive notifications are explicitly deferred.
+- Managed context snapshots are immutable, streamed, workspace-bound and validated.
+  Owner CLI imports files; tools cannot fetch arbitrary server paths. Inline snapshots
+  differ from retrieval-time references. Preserve interrupted imports; never silently
+  reuse them as ready content. Context copies do not hold task transaction locks.
+- Delegation requires both explicit permission and workspace enablement; disabled by
+  default. Freeze the selected task version/context/profile/not-before in a queue.
+  Starting MCP never starts a worker. The restricted claim/heartbeat/finish contract
+  ships with fake-worker tests only; Codex/Claude execution adapters are deferred.
+- Persist attempts before issuing them. Current worker concurrency is one globally;
+  future polling must be bounded/configurable. Lost/expired ownership becomes uncertain,
+  never automatically requeued. Keep checkout/worker reservations until terminal report
+  or explicit owner reconciliation. Cancellation requests do not prove stopping.
+- Back up task databases via SQLite backup plus managed context; preserve configuration,
+  credentials and skill state separately for full recovery. Restore only into an absent
+  workspace with workers/clients stopped. Mark restored active attempts uncertain and
+  verify context checksums. Never overwrite newer/unfinished work or downgrade schemas.
+
 ## Validation and maintenance
 
 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, and
@@ -95,4 +150,5 @@ that could affect allocation or retention.
 
 Keep `AGENTS.md` and `CLAUDE.md` identical. Keep README, recovery procedures and
 memory observations aligned with implemented behavior; do not describe deferred
-native installation or remote delivery as existing features.
+native installation, remote delivery, production runners, normalization or proactive
+notifications as existing features.

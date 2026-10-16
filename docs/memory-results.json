@@ -1,76 +1,106 @@
 {
   "python": "3.12.3",
-  "platform": "Linux-6.8.0-146-generic-x86_64-with-glibc2.39",
+  "platform": "Linux-6.8.0-147-generic-x86_64-with-glibc2.39",
   "limits": {
-    "port": 60579,
+    "port": 47143,
     "package_bytes": 268435456,
     "package_files": 4096,
     "storage_bytes": 2147483648,
     "file_workers": 2,
     "waiting_operations": 16
   },
+  "configured_profiles": [
+    "legacy",
+    "personal",
+    "work"
+  ],
   "units": "MiB from Linux /proc RSS/HWM counters; peak sampled every 20 ms",
   "samples": {
     "empty_service_idle": {
-      "VmHWM": 71.37,
-      "VmRSS": 71.37
+      "VmHWM": 72.52,
+      "VmRSS": 72.52
     },
     "warmed_two_clients_idle": {
-      "VmHWM": 71.91,
-      "VmRSS": 71.91
+      "VmHWM": 73.07,
+      "VmRSS": 73.07
     },
     "after_10_small_sessions": {
-      "VmHWM": 72.19,
-      "VmRSS": 72.19
+      "VmHWM": 73.37,
+      "VmRSS": 73.37
     },
     "after_50_small_sessions": {
-      "VmHWM": 72.45,
-      "VmRSS": 72.45
+      "VmHWM": 73.64,
+      "VmRSS": 73.64
     },
     "after_100_small_sessions": {
-      "VmHWM": 72.55,
-      "VmRSS": 72.55
+      "VmHWM": 73.73,
+      "VmRSS": 73.73
     },
     "after_two_128MiB_packages": {
-      "VmHWM": 76.32,
-      "VmRSS": 76.32
+      "VmHWM": 77.5,
+      "VmRSS": 77.5
     },
     "after_128MiB_binary_publication": {
-      "VmHWM": 76.36,
-      "VmRSS": 76.36
+      "VmHWM": 77.54,
+      "VmRSS": 77.54
     },
     "after_40_more_small_sessions": {
-      "VmHWM": 75.43,
-      "VmRSS": 72.62
+      "VmHWM": 76.73,
+      "VmRSS": 73.8
+    },
+    "warmed_two_workspace_clients": {
+      "VmHWM": 76.73,
+      "VmRSS": 73.89
+    },
+    "after_20_task_pause_cycles": {
+      "VmHWM": 76.73,
+      "VmRSS": 75.14
+    },
+    "after_100_task_pause_cycles": {
+      "VmHWM": 76.73,
+      "VmRSS": 75.3
+    },
+    "after_200_task_pause_cycles": {
+      "VmHWM": 76.73,
+      "VmRSS": 75.4
+    },
+    "after_20000_history_rows_and_100_queries": {
+      "VmHWM": 76.73,
+      "VmRSS": 75.73
+    },
+    "after_40_more_task_pause_cycles": {
+      "VmHWM": 76.73,
+      "VmRSS": 75.75
     },
     "http_with_two_stdio_processes": {
-      "VmHWM": 75.43,
-      "VmRSS": 72.62
+      "VmHWM": 76.73,
+      "VmRSS": 75.75
     },
     "after_clients_disconnect": {
-      "VmHWM": 75.43,
-      "VmRSS": 72.62
+      "VmHWM": 76.73,
+      "VmRSS": 75.75
     }
   },
-  "two_large_cycles_seconds": 0.92,
+  "two_large_cycles_seconds": 0.94,
+  "personal_task_database_MiB": 90.77,
   "two_stdio_compatibility_processes": [
     {
-      "VmHWM": 71.43,
-      "VmRSS": 71.43
+      "VmHWM": 71.39,
+      "VmRSS": 71.39
     },
     {
-      "VmHWM": 71.53,
-      "VmRSS": 71.53
+      "VmHWM": 71.92,
+      "VmRSS": 71.92
     }
   ],
   "client_benchmark_process": {
-    "VmHWM": 67.97,
-    "VmRSS": 67.97
+    "VmHWM": 71.57,
+    "VmRSS": 70.74
   },
   "remaining_package_bytes": 0,
   "consumer_checkouts_unchanged": true,
   "peak_sampled_during_operations": {
-    "VmRSS": 76.39,
-    "VmHWM": 76.39
+    "VmRSS": 77.58,
+    "VmHWM": 77.58
   }
 }

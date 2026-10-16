@@ -12,8 +12,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from mcp.server.transport_security import TransportSecuritySettings
-
 from dev_mcp.config import Settings, bearer_token, write_private
 from dev_mcp.skills.files import SkillError
 
@@ -56,6 +54,7 @@ def main() -> None:
     parser.add_argument("--config", type=Path, help="Private configuration directory")
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("stdio", help="Separate compatibility process (default)")
+    parser.add_argument("--profile", help="Fixed connection profile (required for stdio)")
     serve = sub.add_parser("serve", help="Run the shared loopback HTTP service")
     serve.add_argument("--port", type=int)
     service = sub.add_parser("service", help="Manage the user-level systemd service")
@@ -70,6 +69,29 @@ def main() -> None:
         "--keep-current-source",
         action="store_true",
         help="Accept inspected source and discard this transaction's backup/proposal",
+    )
+    workspace = sub.add_parser(
+        "workspace", help="Owner workspace configuration and offline backups"
+    )
+    workspace.add_argument(
+        "action", choices=["list", "configure", "backup", "restore", "reconcile", "context-import"]
+    )
+    workspace.add_argument("name", nargs="?")
+    workspace.add_argument("--timezone", default="Europe/Berlin")
+    workspace.add_argument("--delegation-enabled", action="store_true")
+    workspace.add_argument("--execution-profile", action="append", default=[])
+    workspace.add_argument("--path", type=Path)
+    workspace.add_argument("--attempt-id")
+    workspace.add_argument("--confirmed-stopped", action="store_true")
+    profile = sub.add_parser(
+        "profile", help="Owner-only profile credentials; secrets are never printed"
+    )
+    profile.add_argument("action", choices=["create", "rotate", "revoke"])
+    profile.add_argument("name")
+    profile.add_argument("--workspace", default="personal")
+    profile.add_argument(
+        "--permissions",
+        default="tasks.read,tasks.write,reminders.read,reminders.write,pauses.read,pauses.write",
     )
     args = parser.parse_args()
     logging.basicConfig(
@@ -93,6 +115,11 @@ def main() -> None:
             overrides["port"] = args.port
         settings = dataclasses.replace(settings, **overrides)
         settings.validate()
+        if args.command in {"workspace", "profile"}:
+            from dev_mcp.owner import manage
+
+            manage(settings, args)
+            return
         if args.command == "recovery":
             from dev_mcp.skills.recovery import accept_current_source
             from dev_mcp.skills.service import SkillService
@@ -144,21 +171,9 @@ def main() -> None:
                     raise ValueError(
                         "Shared service is already running for this state directory"
                     ) from None
-                server = create_server(settings, token=bearer_token(settings))
-                app = server.streamable_http_app(
-                    host="127.0.0.1",
-                    json_response=True,
-                    stateless_http=True,
-                    max_request_body_size=128 * 1024,
-                    transport_security=TransportSecuritySettings(
-                        enable_dns_rebinding_protection=True,
-                        allowed_hosts=[f"127.0.0.1:{settings.port}", f"localhost:{settings.port}"],
-                        allowed_origins=[
-                            f"http://127.0.0.1:{settings.port}",
-                            f"http://localhost:{settings.port}",
-                        ],
-                    ),
-                )
+                from dev_mcp.transport import ProfileHTTP
+
+                app = ProfileHTTP(settings)
                 uvicorn.run(
                     app,
                     host="127.0.0.1",
@@ -168,7 +183,11 @@ def main() -> None:
                     limit_concurrency=64,
                 )
         else:
-            create_server(settings).run("stdio")
+            if not args.profile:
+                raise ValueError(
+                    "Stdio requires --profile NAME; use --profile legacy for existing skills"
+                )
+            create_server(settings, profile=args.profile).run("stdio")
     except (ValueError, OSError, SkillError, subprocess.CalledProcessError) as exc:
         print(f"dev-mcp: {exc}", file=sys.stderr)
         raise SystemExit(1) from None

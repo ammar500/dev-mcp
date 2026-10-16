@@ -22,7 +22,10 @@ from mcp import StdioServerParameters
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
 
+from dev_mcp.access import EDITOR, Access
 from dev_mcp.config import Settings, bearer_token
+from dev_mcp.tasks import store
+from dev_mcp.tasks.common import dump, now
 
 
 def rss(pid: int) -> dict[str, float]:
@@ -53,6 +56,9 @@ async def measure(root: Path) -> dict[str, Any]:
     settings.library.mkdir()
     settings.save()
     token = bearer_token(settings)
+    access = Access(settings)
+    for workspace in ("personal", "work"):
+        access.create_profile(workspace, workspace, sorted(EDITOR))
     env = {
         **os.environ,
         "DEV_MCP_CONFIG": str(settings.config),
@@ -69,6 +75,7 @@ async def measure(root: Path) -> dict[str, Any]:
         "python": platform.python_version(),
         "platform": platform.platform(),
         "limits": {k: v for k, v in dataclasses.asdict(settings).items() if isinstance(v, int)},
+        "configured_profiles": ["legacy", "personal", "work"],
         "units": "MiB from Linux /proc RSS/HWM counters; peak sampled every 20 ms",
         "samples": {},
     }
@@ -173,21 +180,123 @@ async def measure(root: Path) -> dict[str, Any]:
             for _ in range(20):
                 await asyncio.gather(*(cycle(c, "small", i) for i, c in enumerate(clients)))
             samples["after_40_more_small_sessions"] = rss(process.pid)
+            task_clients = []
+            for workspace in ("personal", "work"):
+                http = await stack.enter_async_context(
+                    httpx2.AsyncClient(
+                        headers={"Authorization": "Bearer " + access.token(workspace)}
+                    )
+                )
+                task_clients.append(
+                    await stack.enter_async_context(
+                        Client(
+                            streamable_http_client(
+                                f"http://127.0.0.1:{port}/mcp/{workspace}", http_client=http
+                            ),
+                            cache=None,
+                        )
+                    )
+                )
+
+            async def task_call(client: Client, name: str, **args: Any) -> dict[str, Any]:
+                if name not in {"workspace_context", "tasks_get", "tasks_list", "pauses_find"}:
+                    args["request_id"] = str(uuid.uuid4())
+                response = await client.call_tool(name, args)
+                if response.is_error:
+                    raise RuntimeError(response.content)
+                return dict(response.structured_content or {})
+
+            await asyncio.gather(*(task_call(c, "workspace_context") for c in task_clients))
+            samples["warmed_two_workspace_clients"] = rss(process.pid)
+
+            async def task_cycle(client: Client) -> str:
+                task = await task_call(
+                    client,
+                    "tasks_create",
+                    title="Memory cycle",
+                    instructions="A bounded instruction " * 100,
+                )
+                pause = await task_call(
+                    client, "pauses_save", task_id=task["id"], raw_text="Raw note preserved " * 100
+                )
+                await task_call(client, "pauses_find", pause_id=pause["id"])
+                await task_call(
+                    client,
+                    "pauses_update",
+                    pause_id=pause["id"],
+                    expected_version=1,
+                    patch={"resumed": True},
+                )
+                await task_call(
+                    client,
+                    "tasks_transition",
+                    task_id=task["id"],
+                    expected_version=1,
+                    action="complete",
+                )
+                return str(task["id"])
+
+            for count in range(1, 101):
+                latest = await asyncio.gather(*(task_cycle(c) for c in task_clients))
+                if count in {10, 50, 100}:
+                    samples[f"after_{count * 2}_task_pause_cycles"] = rss(process.pid)
+            # Populate a large durable history without retaining it in the daemon or client.
+            path = access.root("personal") / "tasks.sqlite3"
+            with store.coordination(access):
+                db = store.connect(path)
+                try:
+                    with db:
+                        db.executemany(
+                            "INSERT INTO events(entity_id,kind,actor,created,details) "
+                            "VALUES(?,?,?,?,?)",
+                            (
+                                (
+                                    latest[0],
+                                    "benchmark",
+                                    "benchmark",
+                                    now(),
+                                    dump({"summary": "x" * 4096}),
+                                )
+                                for _ in range(20000)
+                            ),
+                        )
+                finally:
+                    db.close()
+            for _ in range(100):
+                await task_call(
+                    task_clients[0],
+                    "tasks_get",
+                    task_id=latest[0],
+                    view="history",
+                    limit=50,
+                    offset=100,
+                )
+                await task_call(task_clients[1], "tasks_list", limit=50)
+            samples["after_20000_history_rows_and_100_queries"] = rss(process.pid)
+            report["personal_task_database_MiB"] = round(path.stat().st_size / 1024**2, 2)
+            for _ in range(20):
+                await asyncio.gather(*(task_cycle(c) for c in task_clients))
+            samples["after_40_more_task_pause_cycles"] = rss(process.pid)
             # Separate stdio processes deliberately share the same durable state.
             pids_before = set(
                 Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children").read_text().split()
             )
-            for _ in range(2):
+            for profile in ("legacy", "personal"):
                 c = await stack.enter_async_context(
                     Client(
                         StdioServerParameters(
-                            command=sys.executable, args=["-m", "dev_mcp"], env=env
+                            command=sys.executable,
+                            args=["-m", "dev_mcp", "--profile", profile],
+                            env=env,
                         ),
                         mode="legacy",
                         cache=None,
                     )
                 )
-                await call(c, "search")
+                if profile == "legacy":
+                    await call(c, "search")
+                else:
+                    await task_call(c, "workspace_context")
             pids_after = set(
                 Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children").read_text().split()
             )
