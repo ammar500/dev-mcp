@@ -139,6 +139,38 @@ cost in architecture discussions and feature work.
   workspace with workers/clients stopped. Mark restored active attempts uncertain and
   verify context checksums. Never overwrite newer/unfinished work or downgrade schemas.
 
+## Per-repository testing queues
+
+- Keep testing logic in `testing/`, using workspace SQLite, bounded task admission,
+  and the shared short cross-process coordination lock. No scheduler, background
+  polling, stack/agent runner, Git writes, or test execution. Git discovery uses
+  bounded read-only subprocess output; no resident Git process or package cache.
+- `testing.read`/`testing.use` are explicit opt-ins; use requires read. Legacy and
+  existing profiles gain nothing automatically. Scope ticket reads to the workspace;
+  only the owning profile can check for permission or finish. A ticket ID is not auth.
+- Canonical Git common directories identify queues. Linked worktrees share the main
+  checkout, independent clones are separate, and bare repositories are unsupported.
+  One holder per repo across processes/workspaces; keep foreign conflicts opaque.
+- Strict FIFO: **no automatic expiry or skipping**, including silent waiting agents.
+  Agents poll only while waiting; active holders need no heartbeat. Disconnects,
+  restarts, missing worktrees, and elapsed time never advance or release the queue.
+- Join never grants permission. Only live `testing_check` may grant to the first
+  waiter with an available slot/checkout. Never cache a historical permission grant.
+  Require request IDs for join/done. Polls update last-checked metadata without adding
+  request/audit records; audit enrollment, grants, completion, and owner recovery.
+- `testing_done` withdraws waiting tickets or finishes active tickets after explicit
+  stack-stopped and cleanup-complete assertions. Failed cleanup retains ownership.
+  Terminal calls are harmless; preserve ticket/history records on disk, not in caches.
+- Testing holders reserve overlapping checkouts against task claims. Exempt only an
+  explicitly linked running attempt validated for task, owner, session, and checkout.
+  Task completion never releases testing; testing completion never changes tasks.
+- Owner CLI recovery requires a reason; releasing holders also requires shutdown and
+  cleanup confirmation. Record the local owner and reason. It never stops processes
+  or changes checkouts. Restored holders become `recovery_required`, still blocking,
+  until explicit owner recovery. Include tickets in migrations and workspace backups.
+- Coordination depends on cooperating agents. MCP cannot physically prevent a stack
+  from being started by an agent with unrestricted filesystem/process access.
+
 ## Validation and maintenance
 
 Run `uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, and

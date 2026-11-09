@@ -136,6 +136,47 @@ current instructions and deliberately claim/delegate again if appropriate. If a
 profile was revoked, its outstanding attempts still need reconciliation; recreating
 a profile is not a safe substitute for inspecting the old session.
 
+## Testing queue recovery
+
+Testing tickets have **no lease or automatic expiry**. Waiting agents poll; active
+holders do not. Silence, disconnect, age, and server restarts never release either.
+Use `testing_list` through a profile with `testing.read` in the relevant workspace
+and filter by repository, worktree, session, or ticket ID. Default results include
+waiting/active/recovery-required records; use `status="all"` for completed records.
+A revoked profile's tickets remain discoverable through another authorized reader.
+
+The owner can explicitly retire an abandoned **waiting** ticket:
+
+```sh
+uv run dev-mcp workspace testing-recover work --ticket-id <id> --reason "Session abandoned; withdrawn explicitly"
+```
+
+For an active or restored holder, inspect the actual stack and main checkout first.
+Stop the stack, preserve needed work, and finish cleanup. Then confirm both facts:
+
+```sh
+uv run dev-mcp workspace testing-recover work --ticket-id <id> --reason "Stopped the abandoned stack and checked cleanup" --stack-stopped --cleanup-complete
+```
+
+This records the local owner's UID, previous state, reason, and confirmations;
+it marks the ticket `reconciled`. It never kills a process, modifies Git, or grants
+the next ticket automatically. Repeated recovery of a terminal ticket is harmless.
+Do not use recovery just because an agent has been quiet. A queue blocked by an
+unavailable checkout or missing worktree stays blocked until explicitly resolved.
+
+Normal agents call `testing_done` to withdraw or finish their own tickets. An active
+holder must confirm stack shutdown and cleanup; an unsuccessful cleanup leaves its
+reservation in place. Restored `recovery_required` tickets require the owner CLI,
+not `testing_done`. Task-attempt reconciliation and testing recovery are independent:
+releasing one never implicitly releases the other.
+
+Before restoring a workspace snapshot, stop all testing agents and all clients
+across the deployment, including those in other workspaces sharing a repository.
+Old ticket grants must not be reused after restore. Restored holders stay blocking
+even if another workspace has newer records. Inspect and reconcile the real stack
+before allowing any waiter to proceed. Preserve all existing data first; restore
+never overwrites a present workspace.
+
 ## Workspace task backups and restore
 
 Stop the shared service, every stdio server, any external task writers and workers
@@ -151,11 +192,11 @@ uv run dev-mcp workspace backup personal --path /private/backups/personal-2026-1
 
 The destination must be new and outside Git. The command uses SQLite's backup API
 and streams managed context with checksums into a private directory. It includes
-tasks, reminders, checkpoints, delegation/attempt records, retry receipts and audit
-history. Inspect `backup.json` for the source workspace and context manifest.
+tasks, reminders, checkpoints, delegation/attempt records, testing tickets, retry
+receipts and audit history. Inspect `backup.json` for the source workspace and context manifest.
 A failed backup is incomplete and preserved for inspection; retry with a new path.
 
-**This command backs up the task feature.** It excludes profile credentials,
+**This command backs up workspace task and testing data.** It excludes profile credentials,
 configuration, skills/originals/borrowed copies, and external context references.
 For a full deployment backup, also preserve `settings.json`, `access.json`, private
 credentials, the legacy personal skill state/library, and each non-personal
@@ -175,7 +216,9 @@ uv run dev-mcp workspace restore personal --path /private/backups/personal-2026-
 
 Restore stages a database, checks integrity/schema and context checksums, renews
 managed-context file identities, then publishes the directory atomically. Active
-attempts and active delegations become `uncertain`. Reconcile them before retrying.
+attempts and active delegations become `uncertain`. Active testing tickets become
+`recovery_required` and retain their slots/checkout reservations. Waiting tickets
+keep their order and remain blocking. Reconcile holders before retrying.
 If startup finds a leftover `<workspace>.restore` directory after a hard crash,
 preserve/inspect it and retry only after moving that unpublished staging aside.
 The published directory is never overwritten by restore.
@@ -188,7 +231,9 @@ remain at their existing paths, outside the task workspace directory.
 ## Schema migration, context imports, and retention
 
 The task database is new and independent of the existing skill database. Startup
-performs the explicit version-0-to-1 task schema transaction when needed. Unknown
+creates schema version 2 for empty databases and atomically upgrades version 1
+with the testing-ticket table and indexes. Existing records and credentials remain
+unchanged; old version-1 backups are migrated in private restore staging. Unknown
 schema versions fail closed; there is no destructive downgrade. Take a consistent
 backup before future migrations. Config schema version 1 similarly rejects unknown
 versions. Migration never moves existing skills or enables task access on `/mcp`.

@@ -1,6 +1,6 @@
 # Developer MCP
 
-A local Python MCP service with independent skill and task features. Agents can
+A local Python MCP service with independent skill, task, and testing-queue features. Agents can
 borrow complete skill packages, manage workspace-scoped tasks and reminders, and
 save raw “where I left off” notes. Optional explicit delegation uses a durable
 queue and a tested worker contract. Production agent runners, AI normalization,
@@ -89,7 +89,7 @@ Stdout carries only protocol messages; diagnostics go to stderr.
 
 Owner CLI commands run locally. Create separate credentials for each workspace
 and, when useful, each client. The default new profile has task, reminder, and
-pause read/write permissions; it has no skills, delegation, or worker access.
+pause read/write permissions; it has no skills, testing, delegation, or worker access.
 
 ```sh
 uv run dev-mcp workspace list
@@ -115,7 +115,8 @@ uv run dev-mcp profile revoke work-reader
 ```
 
 Permissions are `tasks.read`, `tasks.write`, `reminders.read`, `reminders.write`,
-`pauses.read`, `pauses.write`, `skills`, `delegate`, and `worker`. Write requires
+`pauses.read`, `pauses.write`, `testing.read`, `testing.use`, `skills`, `delegate`,
+and `worker`. `testing.use` requires `testing.read`. Write requires
 the corresponding read permission; `delegate` also requires task read/write.
 A worker profile must contain only `worker`. Disabled tool groups are omitted from
 the profile's tool catalogue, and every operation checks its scope. Up to 32
@@ -204,6 +205,81 @@ resumed/archive flags or contextual metadata. Correct raw text by saving a new
 checkpoint with `supersedes=<old-id>`; the original remains retrievable. These
 operations never change task state, control an agent, or enqueue work. They never
 inspect API keys, invoke a model, or launch a normalization subprocess.
+
+## Per-repository testing queues
+
+Testing requires local Git and an explicitly enabled profile. Existing profiles and
+legacy `/mcp` gain no new permissions. For a testing-only connection:
+
+```sh
+uv run dev-mcp profile create work-tester --workspace work --permissions testing.read,testing.use
+uv run dev-mcp service stop
+uv run dev-mcp service start
+```
+
+Connect to `/mcp/work-tester` using its private credential file. A combined profile
+can additionally include task permissions; `testing.use` never grants task editing
+or delegation. The queue adds four tools to enabled profiles, sharing the existing
+bounded task pool and SQLite coordination lock. It has no polling thread, watcher,
+runner, scheduler, or resident Git process.
+
+| Tool | Arguments and result |
+| --- | --- |
+| `testing_join` | `request_id`, absolute `source_worktree`, originating `session_ref`; optional `additional_info`, `task_id`, `attempt_id`. Returns durable `id`, FIFO `sequence`, repository and testing-checkout paths, `can_test=false`. |
+| `testing_check` | `ticket_id`; returns live `status`, `can_test`, `testing_checkout`, `last_checked`, and `poll_after_seconds`. |
+| `testing_done` | `request_id`, `ticket_id`, optional `outcome`. Active holders require both `stack_stopped=true` and `cleanup_complete=true`. |
+| `testing_list` | Exact `ticket_id`, or filters for `repository`, `source_worktree`, `session_ref`, `status`; `offset`/`limit` default 0/20, maximum 50. |
+
+Use the returned ticket `id` as the token. It identifies the ticket; profile
+credentials still control access. Only the owning profile can check or finish a
+ticket. A `testing.read` connection can see tickets in its own workspace. Session
+labels and cleanup confirmations are agent assertions, not independently verified.
+
+1. Join using the source worktree's root. Joining never grants permission.
+2. Check approximately every 30 seconds **only while waiting**. Only a live
+   `testing_check` response with `can_test=true` authorizes testing. A list result
+   or an old saved grant is not a new permission grant.
+3. Prepare the intended revision in `testing_checkout` using the repository's own
+   workflow, then start the stack and test. Changing directories alone does not
+   bring worktree edits into the main checkout. MCP does not switch branches,
+   transfer changes, run tests, or start/stop containers or agents.
+4. **Do not poll while testing. No active heartbeat is required.** After stopping
+   the stack and completing checkout cleanup, call `testing_done`. Failed tests
+   may release with an explanatory outcome; failed cleanup must keep the slot.
+5. The next ticket becomes eligible but is granted only on its owner's next check.
+
+The queue is **strict FIFO with no automatic expiry or skipping**. A waiting agent
+that stops polling still blocks its successors. Active agents keep ownership across
+disconnects, process restarts, and elapsed time. An agent can withdraw a waiting
+ticket through `testing_done`; that ticket becomes `cancelled`. Terminal tickets
+stay discoverable and repeated completion is harmless. Missing worktrees do not
+advance the queue; withdraw explicitly or use owner recovery. Check responses give
+local failure details, while other-workspace conflicts are only `unavailable`.
+
+There is one slot per canonical Git common directory, across all processes,
+profiles, and workspaces sharing this state directory. Linked worktrees use their
+repository's main checkout; independent clones count as separate repositories.
+Different repos can test concurrently. Only non-bare local repositories are supported.
+Git must expose a verifiable primary checkout; unresolved layouts are rejected
+for owner inspection. The server never guesses or repairs repository configuration.
+`repository` in list filters means the returned canonical Git common-directory path,
+not a remote URL. Lists default to pending tickets; `status="all"` includes history.
+
+Active testing reserves the main checkout against overlapping task claims. To test
+under your own existing task claim, supply its `task_id` and `attempt_id` at join:
+this requires task read/write permission, the same owning profile and session,
+a running attempt, and a reserved source/main checkout. Only that exact reservation
+is exempted during grant. Its task heartbeat rules remain separate. Completing a
+task never releases its testing ticket; finishing testing never completes a task.
+
+Join/done use exact idempotent retries. `testing_check` takes no request ID and always
+returns live state; polls update one timestamp without appending request receipts
+or audit history. Enrollment, grant, completion, and owner recovery are audited.
+Lifecycle states are `waiting`, `active`, `done`, `cancelled`, `reconciled`, and
+`recovery_required` for restored holders. No operation automatically evicts tickets.
+These permissions coordinate cooperating agents; they cannot physically prevent an
+agent with filesystem/process access from starting a stack without permission.
+See [owner recovery and backups](docs/recovery.md#testing-queue-recovery).
 
 ## Context and delegation
 
@@ -430,7 +506,7 @@ Defaults in `settings.json` (restart all processes after changing shared limits)
 | `waiting_operations` | 16 additional operations across shared-state processes |
 
 Task and skill operations have separate shared admission pools (two active and
-sixteen waiting each), shared across profiles and compatibility processes. Task
+sixteen waiting each), shared across profiles and compatibility processes. Testing shares task admission. Task
 transactions use a separate short lock and do not wait for skill copies.
 Requests receive explicit capacity errors; active work is never evicted. Durable
 filesystem mutations are serialized across HTTP and stdio processes with a local
@@ -446,9 +522,8 @@ Raw pause text has a 16 KiB serialized limit. `latest-*` skill reports are
 replaced by the next oversized response from that tool.
 
 [Memory measurements](docs/memory.md) include two HTTP clients, large packages,
-repeated sessions and two compatibility processes, workspace task cycles and large durable histories.
-Measurements assess growth
-and allocations; there is no arbitrary fixed memory cap.
+repeated sessions, two compatibility processes, workspace task cycles, large histories,
+1,000 waiting polls and 20,000 queued tickets. Measurements assess growth and allocations; there is no arbitrary fixed memory cap.
 
 ```sh
 uv run ruff check .
@@ -458,7 +533,8 @@ uv run pytest
 uv run python scripts/measure_memory.py
 ```
 
-Tests cover the skills and task/worker tools in process, over real stdio, and over shared HTTP,
+Tests cover skills, tasks/workers, and testing tools in process, over real stdio, and shared HTTP,
 including auth/origin rejection, concurrent clients, unchanged consuming checkouts,
-package safety/limits, retries, cleanup, frozen binary updates and crash recovery.
+package safety/limits, retries, cleanup, frozen binary updates, strict FIFO, checkout
+reservations, restore/owner recovery, and silent waiting/active agents.
 Tests and the memory benchmark use temporary libraries and state, not personal skills.
