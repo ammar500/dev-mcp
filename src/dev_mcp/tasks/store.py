@@ -68,6 +68,43 @@ CREATE TABLE requests (
 PRAGMA user_version=1;
 """
 ACTIVE = ("running", "cancel_requested", "uncertain")
+SCHEMA_VERSION = 2
+TESTING_MIGRATION = """
+CREATE TABLE testing_tickets (
+ id TEXT PRIMARY KEY, repository TEXT NOT NULL, source_worktree TEXT NOT NULL,
+ testing_checkout TEXT NOT NULL, owner TEXT NOT NULL, session_ref TEXT NOT NULL,
+ task_id TEXT REFERENCES tasks(id), attempt_id TEXT REFERENCES attempts(id),
+ additional_info TEXT NOT NULL, sequence INTEGER NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('waiting','active','done','cancelled','reconciled',
+ 'recovery_required')), outcome TEXT NOT NULL DEFAULT '',
+ created TEXT NOT NULL, updated TEXT NOT NULL, last_checked TEXT, granted TEXT, finished TEXT);
+CREATE INDEX testing_order ON testing_tickets(repository,sequence,id);
+CREATE INDEX testing_pending ON testing_tickets(repository,sequence,id)
+ WHERE status IN ('waiting','active','recovery_required');
+CREATE UNIQUE INDEX testing_holder ON testing_tickets(repository)
+ WHERE status IN ('active','recovery_required');
+CREATE INDEX testing_reservations ON testing_tickets(testing_checkout)
+ WHERE status IN ('active','recovery_required');
+CREATE INDEX testing_session ON testing_tickets(session_ref,sequence,id);
+CREATE INDEX testing_worktree ON testing_tickets(source_worktree,sequence,id);
+CREATE INDEX testing_status ON testing_tickets(status,sequence,id);
+PRAGMA user_version=2;
+"""
+
+
+def migrate(db: sqlite3.Connection, *, allow_empty: bool = True) -> None:
+    """Upgrade atomically; also used on a private backup-restore staging database."""
+    version = db.execute("PRAGMA user_version").fetchone()[0]
+    require(version in ({0, 1, 2} if allow_empty else {1, 2}), "Unsupported tasks database version")
+    script = SCHEMA if version == 0 else ""
+    if version < 2:
+        script += TESTING_MIGRATION
+    if script:
+        try:
+            db.executescript("BEGIN IMMEDIATE;\n" + script + "\nCOMMIT;")
+        except Exception:
+            db.rollback()
+            raise
 
 
 @contextmanager
@@ -101,11 +138,7 @@ def initialize(access: Access, workspace: str) -> Path:
         db = connect(path)
         try:
             db.execute("PRAGMA journal_mode=WAL")
-            version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                db.executescript("BEGIN IMMEDIATE;\n" + SCHEMA + "\nCOMMIT;")
-            elif version != 1:
-                raise ValueError("Unsupported tasks database version")
+            migrate(db)
         finally:
             db.close()
         path.chmod(0o600)

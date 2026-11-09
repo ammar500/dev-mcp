@@ -29,6 +29,8 @@ PERMISSIONS = frozenset(
         "delegate",
         "worker",
         "skills",
+        "testing.read",
+        "testing.use",
     }
 )
 EDITOR = frozenset(
@@ -122,6 +124,8 @@ class Access:
                 raise ValueError("Write permissions also require the corresponding read permission")
         if "delegate" in profile.permissions and "tasks.write" not in profile.permissions:
             raise ValueError("Delegation requires tasks.write")
+        if "testing.use" in profile.permissions and "testing.read" not in profile.permissions:
+            raise ValueError("testing.use also requires testing.read")
         if "worker" in profile.permissions and profile.permissions != frozenset({"worker"}):
             raise ValueError("Worker profiles must contain only the worker permission")
         self.profiles[profile.id] = profile
