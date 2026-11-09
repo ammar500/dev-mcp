@@ -111,7 +111,7 @@ async def test_stdio_all_eight(settings: Settings, package: Path, tmp_path: Path
     checkout.mkdir()
     parameters = StdioServerParameters(
         command=sys.executable,
-        args=["-m", "dev_mcp"],
+        args=["-m", "dev_mcp", "--profile", "legacy"],
         cwd=Path(__file__).resolve().parents[1],
         env={
             **os.environ,
