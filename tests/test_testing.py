@@ -260,3 +260,100 @@ def test_repository_validation_and_git_environment(
         discover(str(repo / "nested"))
     with pytest.raises(TaskError):
         discover(str(tmp_path))
+
+
+def test_restore_holders_require_owner_recovery(
+    queue: TaskService, queue_access: Access, repo: Path, tmp_path: Path
+) -> None:
+    from dev_mcp.tasks.maintenance import backup, restore
+    from dev_mcp.testing.maintenance import recover
+
+    holder, waiter = join(queue, repo), join(queue, repo)
+    assert check(queue, holder)["can_test"]
+    saved = tmp_path / "backup"
+    backup(queue_access, "personal", saved)
+    # Simulate preserving current state outside the deployment and restoring a snapshot.
+    queue_access.root("personal").rename(tmp_path / "preserved")
+    restore(queue_access, "personal", saved, confirmed_stopped=True)
+    fresh = TaskService(queue_access, queue_access.profile("tester"))
+    restored = check(fresh, holder)
+    assert restored["status"] == "recovery_required" and not restored["can_test"]
+    assert not check(fresh, waiter)["can_test"]
+    with pytest.raises(TaskError, match="owner recovery"):
+        finish(fresh, holder, stack_stopped=True, cleanup_complete=True)
+    other = TaskService(queue_access, queue_access.profile("work"))
+    t = task(other, checkout=str(repo))
+    with pytest.raises(TaskError, match="Checkout overlaps"):
+        call(other, "tasks_claim", task_id=t["id"], expected_version=1, session_ref="work")
+    for flags in ({}, {"stack_stopped": True}, {"cleanup_complete": True}):
+        with pytest.raises(TaskError, match="confirm both"):
+            recover(queue_access, "personal", holder["id"], reason="inspected", **flags)
+    assert (
+        recover(
+            queue_access,
+            "personal",
+            holder["id"],
+            reason="Manually stopped and cleaned",
+            stack_stopped=True,
+            cleanup_complete=True,
+        )["status"]
+        == "reconciled"
+    )
+    assert check(fresh, waiter)["can_test"]
+    db = store.connect(fresh.path)
+    try:
+        audit = db.execute(
+            "SELECT * FROM events WHERE entity_id=? AND kind='testing.owner_reconciled'",
+            (holder["id"],),
+        ).fetchone()
+        assert audit["actor"].startswith("local-owner:")
+        assert json.loads(audit["details"])["reason"] == "Manually stopped and cleaned"
+    finally:
+        db.close()
+
+
+def test_recovery_withdraws_silent_waiter_and_is_idempotent(
+    queue: TaskService, queue_access: Access, repo: Path
+) -> None:
+    from dev_mcp.testing.maintenance import recover
+
+    head, successor = join(queue, repo), join(queue, repo)
+    with pytest.raises(TaskError, match="not be empty"):
+        recover(queue_access, "personal", head["id"], reason="")
+    result = recover(queue_access, "personal", head["id"], reason="Abandoned session")
+    assert result == recover(queue_access, "personal", head["id"], reason="Abandoned session")
+    assert check(queue, successor)["can_test"]
+    assert not check(queue, head)["can_test"]
+
+
+def test_task_claim_and_testing_grant_race(
+    queue: TaskService, queue_access: Access, repo: Path
+) -> None:
+    other = TaskService(queue_access, queue_access.profile("work"))
+    ticket = join(queue, repo)
+    t = task(other, checkout=str(repo))
+
+    def claim() -> bool:
+        try:
+            call(other, "tasks_claim", task_id=t["id"], expected_version=1, session_ref="other")
+            return True
+        except TaskError as exc:
+            assert exc.code == "checkout_busy"
+            return False
+
+    with ThreadPoolExecutor(2) as pool:
+        grant = pool.submit(check, queue, ticket)
+        claimed = pool.submit(claim)
+    assert int(grant.result()["can_test"]) + int(claimed.result()) == 1
+
+
+def test_done_check_race_never_leaves_two_holders(queue: TaskService, repo: Path) -> None:
+    first, second = join(queue, repo), join(queue, repo)
+    assert check(queue, first)["can_test"]
+    with ThreadPoolExecutor(2) as pool:
+        done = pool.submit(finish, queue, first, stack_stopped=True, cleanup_complete=True)
+        granted = pool.submit(check, queue, second)
+    assert done.result()["status"] == "done"
+    assert granted.result()["status"] in {"waiting", "active"}
+    assert check(queue, second)["can_test"]
+    assert not check(queue, first)["can_test"]

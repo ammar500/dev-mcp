@@ -74,7 +74,16 @@ def main() -> None:
         "workspace", help="Owner workspace configuration and offline backups"
     )
     workspace.add_argument(
-        "action", choices=["list", "configure", "backup", "restore", "reconcile", "context-import"]
+        "action",
+        choices=[
+            "list",
+            "configure",
+            "backup",
+            "restore",
+            "reconcile",
+            "context-import",
+            "testing-recover",
+        ],
     )
     workspace.add_argument("name", nargs="?")
     workspace.add_argument("--timezone", default="Europe/Berlin")
@@ -83,6 +92,10 @@ def main() -> None:
     workspace.add_argument("--path", type=Path)
     workspace.add_argument("--attempt-id")
     workspace.add_argument("--confirmed-stopped", action="store_true")
+    workspace.add_argument("--ticket-id")
+    workspace.add_argument("--reason")
+    workspace.add_argument("--stack-stopped", action="store_true")
+    workspace.add_argument("--cleanup-complete", action="store_true")
     profile = sub.add_parser(
         "profile", help="Owner-only profile credentials; secrets are never printed"
     )

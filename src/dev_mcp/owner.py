@@ -56,6 +56,23 @@ def manage(settings: Settings, args: argparse.Namespace) -> None:
                     args.name, args.timezone, args.delegation_enabled, args.execution_profile
                 )
                 print(json.dumps({"workspace": args.name, "configured": True}))
+            elif args.action == "testing-recover":
+                from dev_mcp.testing.maintenance import recover
+
+                if not args.ticket_id or not args.reason:
+                    raise ValueError("--ticket-id and --reason are required")
+                print(
+                    json.dumps(
+                        recover(
+                            access,
+                            args.name,
+                            args.ticket_id,
+                            reason=args.reason,
+                            stack_stopped=args.stack_stopped,
+                            cleanup_complete=args.cleanup_complete,
+                        )
+                    )
+                )
             elif args.action == "reconcile":
                 if not args.attempt_id:
                     raise ValueError("--attempt-id is required")
