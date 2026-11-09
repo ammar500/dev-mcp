@@ -62,13 +62,20 @@ def git(path: str, *arguments: str) -> bytes:
         raise TaskError("repository_unavailable", "Git metadata lookup failed") from exc
 
 
-def identity(path: str) -> tuple[str, str]:
-    raw = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel")
+def identity(path: str) -> tuple[str, str, str]:
+    raw = git(
+        path,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+        "--show-toplevel",
+        "--absolute-git-dir",
+    )
     parts = os.fsdecode(raw).splitlines()
-    require(len(parts) == 2, "Only non-bare local repositories with plain paths are supported")
-    common, top = (str(Path(p).resolve()) for p in parts)
+    require(len(parts) == 3, "Only non-bare local repositories with plain paths are supported")
+    common, top, git_dir = (str(Path(p).resolve()) for p in parts)
     require(Path(common).is_dir() and Path(top).is_dir(), "Repository directories are unavailable")
-    return common, top
+    return common, top, git_dir
 
 
 def discover(value: object) -> dict[str, str]:
@@ -77,15 +84,21 @@ def discover(value: object) -> dict[str, str]:
         source is not None and "\n" not in source and "\r" not in source, "Invalid worktree path"
     )
     assert source is not None
-    common, top = identity(source)
+    common, top, git_dir = identity(source)
     require(top == source, "source_worktree must be the checkout root")
-    # Git lists the primary worktree first, including repositories using --separate-git-dir.
-    record = git(source, "worktree", "list", "--porcelain", "-z").split(b"\x00\x00", 1)[0]
-    fields = record.split(b"\x00")
-    require(
-        fields[0].startswith(b"worktree ") and b"bare" not in fields,
-        "Bare repositories are unsupported",
-    )
-    main = str(Path(os.fsdecode(fields[0][9:])).resolve())
-    require(identity(main) == (common, main), "Main checkout no longer belongs to this repository")
+    # The primary checkout uses the common Git directory directly. Git's worktree
+    # list can misidentify it for --separate-git-dir without core.worktree configured.
+    main = source
+    if git_dir != common:
+        record = git(source, "worktree", "list", "--porcelain", "-z").split(b"\x00\x00", 1)[0]
+        fields = record.split(b"\x00")
+        require(
+            fields[0].startswith(b"worktree ") and b"bare" not in fields,
+            "Bare repositories are unsupported",
+        )
+        main = str(Path(os.fsdecode(fields[0][9:])).resolve())
+        require(
+            identity(main) == (common, main, common),
+            "Cannot validate the primary checkout; check Git worktree metadata",
+        )
     return {"repository": common, "source_worktree": source, "testing_checkout": main}

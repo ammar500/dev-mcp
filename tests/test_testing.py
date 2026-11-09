@@ -357,3 +357,53 @@ def test_done_check_race_never_leaves_two_holders(queue: TaskService, repo: Path
     assert granted.result()["status"] in {"waiting", "active"}
     assert check(queue, second)["can_test"]
     assert not check(queue, first)["can_test"]
+
+
+def test_restore_version_one_backup_migrates_without_losing_tasks(
+    queue: TaskService, queue_access: Access, tmp_path: Path
+) -> None:
+    from dev_mcp.tasks.maintenance import backup, restore
+
+    original = task(queue)
+    saved = tmp_path / "version-one-backup"
+    backup(queue_access, "personal", saved)
+    db = store.connect(saved / "tasks.sqlite3")
+    try:
+        db.executescript("DROP TABLE testing_tickets; PRAGMA user_version=1;")
+    finally:
+        db.close()
+    queue_access.root("personal").rename(tmp_path / "preserved-current")
+    restore(queue_access, "personal", saved, confirmed_stopped=True)
+    fresh = TaskService(queue_access, queue_access.profile("tester"))
+    assert call(fresh, "tasks_get", task_id=original["id"])["title"] == original["title"]
+    assert call(fresh, "testing_list")["items"] == []
+
+
+def test_repository_bare_rejected_and_separate_git_directory(tmp_path: Path) -> None:
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    git(bare, "init", "--bare", "-q")
+    with pytest.raises(TaskError):
+        discover(str(bare))
+    main = tmp_path / "main"
+    main.mkdir()
+    common = tmp_path / "metadata"
+    git(main, "init", "-q", "--separate-git-dir", str(common))
+    assert discover(str(main)) == {
+        "repository": str(common),
+        "source_worktree": str(main),
+        "testing_checkout": str(main),
+    }
+
+
+def test_head_linked_to_finished_attempt_does_not_skip(queue: TaskService, repo: Path) -> None:
+    t = task(queue, checkout=str(repo))
+    attempt = call(queue, "tasks_claim", task_id=t["id"], expected_version=1, session_ref="chat")
+    head = join(queue, repo, task_id=t["id"], attempt_id=attempt["id"])
+    next_ticket = join(queue, repo)
+    call(queue, "tasks_report", attempt_id=attempt["id"], expected_version=1, action="complete")
+    blocked = check(queue, head)
+    assert not blocked["can_test"] and blocked["waiting_reason"] == "conflict"
+    assert not check(queue, next_ticket)["can_test"]
+    finish(queue, head)
+    assert check(queue, next_ticket)["can_test"]
