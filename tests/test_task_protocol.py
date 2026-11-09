@@ -53,7 +53,7 @@ async def invoke(c: Client, name: str, **args: Any) -> dict[str, Any]:
 
 async def workflow(c: Client, worker: Client, checkout: Path) -> str:
     names = {t.name for t in (await c.list_tools()).tools}
-    assert {n for n, (p, _, _) in OPERATIONS.items() if p != "worker"} <= names
+    assert {n for n, (p, _, _) in OPERATIONS.items() if p in EDITOR | {"delegate"}} <= names
     assert not any(n.startswith("worker_") for n in names)
     assert {t.name for t in (await worker.list_tools()).tools} == {
         "workspace_context",

@@ -247,3 +247,7 @@ def register(server: MCPServer[None], run: Runner, profile: Profile) -> None:
     ) -> CallToolResult:
         """Worker-only terminal report: complete/block/release/cancel/fail."""
         return await invoke("worker_finish", locals())
+
+    from dev_mcp.testing.tools import register as register_testing
+
+    register_testing(server, invoke, profile)

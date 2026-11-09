@@ -118,7 +118,7 @@ def backup(access: Access, workspace: str, destination: Path) -> dict[str, Any]:
     return {
         "backup": str(destination),
         "workspace": workspace,
-        "includes": "tasks, reminders, checkpoints, attempts, audits and managed context",
+        "includes": "tasks, reminders, checkpoints, attempts, testing tickets, audits, context",
         "excludes": "credentials, skill packages/state, external context references",
     }
 
@@ -157,11 +157,19 @@ def restore(
                 require(
                     db.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "Invalid database"
                 )
-                require(
-                    db.execute("PRAGMA user_version").fetchone()[0] == 1,
-                    "Unsupported backup schema",
-                )
+                store.migrate(db, allow_empty=False)
                 with db:
+                    db.execute(
+                        "INSERT INTO events(entity_id,kind,actor,created,details) "
+                        "SELECT id,'testing.restore_requires_recovery','local-owner',?,'{}' "
+                        "FROM testing_tickets WHERE status='active'",
+                        (now(),),
+                    )
+                    db.execute(
+                        "UPDATE testing_tickets SET status='recovery_required',updated=? "
+                        "WHERE status='active'",
+                        (now(),),
+                    )
                     db.execute(
                         "UPDATE attempts SET status='uncertain',version=version+1 "
                         "WHERE status IN ('running','cancel_requested')"
@@ -221,5 +229,5 @@ def restore(
     return {
         "workspace": workspace,
         "restored": True,
-        "guidance": "Reconcile uncertain executions before retrying any work",
+        "guidance": "Reconcile uncertain attempts and restored testing holders before retrying",
     }

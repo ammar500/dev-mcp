@@ -162,6 +162,8 @@ def create_server(
             "Use workspace_context for available task capabilities. Task creation/claims and "
             "raw pause notes launch nothing. No production execution adapters or normalization "
             "are included. Mutations require unique request IDs; reuse only for exact retries. "
+            "Testing tickets never expire: poll testing_check only while waiting, then call "
+            "testing_done after stopping the stack and cleaning up. No active heartbeat. "
             "Skill files are local: borrow outside your checkout, use SKILL.md explicitly, "
             "keep task outputs elsewhere, and release copies. Update skill originals only on "
             "the human's explicit instruction; quote it in update_prepare."

@@ -248,21 +248,38 @@ def reservations(access: Access) -> Iterator[dict[str, Any]]:
         db = connect(path)
         try:
             for row in db.execute(
-                "SELECT checkout,mode FROM attempts WHERE status IN (?,?,?)", ACTIVE
+                "SELECT id,checkout,mode FROM attempts WHERE status IN (?,?,?)", ACTIVE
             ):
-                yield dict(row)
+                yield {**dict(row), "workspace": workspace}
+            schema = db.execute("PRAGMA user_version").fetchone()[0]
+            require(schema in {1, SCHEMA_VERSION}, "Unsupported workspace database schema")
+            if schema == SCHEMA_VERSION:
+                for row in db.execute(
+                    "SELECT id,testing_checkout AS checkout FROM testing_tickets "
+                    "WHERE status IN ('active','recovery_required')"
+                ):
+                    yield {**dict(row), "workspace": workspace, "mode": "testing"}
         finally:
             db.close()
 
 
-def reserve(access: Access, checkout: str | None, *, worker: bool) -> None:
+def reserve(
+    access: Access,
+    checkout: str | None,
+    *,
+    worker: bool,
+    ignore_attempt: tuple[str, str] | None = None,
+) -> None:
     for row in reservations(access):
+        if row["mode"] != "testing" and (row["workspace"], row["id"]) == ignore_attempt:
+            continue
         if worker and row["mode"] == "worker":
             raise TaskError("busy", "The deployment's worker execution slot is occupied")
         if checkout and row["checkout"]:
             a, b = Path(checkout), Path(row["checkout"])
             require(
                 a != b and a not in b.parents and b not in a.parents,
-                "Checkout overlaps an active or uncertain execution; use another worktree",
+                "Checkout overlaps an active/uncertain execution or testing holder; "
+                "release its owner or use another worktree",
                 "checkout_busy",
             )

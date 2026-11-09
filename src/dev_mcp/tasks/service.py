@@ -10,9 +10,15 @@ from typing import Any
 from dev_mcp.access import Access, Profile
 from dev_mcp.tasks import execution, pauses, reminders, store, task
 from dev_mcp.tasks.common import TaskError, dump, require, response_bytes, text
+from dev_mcp.testing import queue as testing
 
 Handler = Callable[["TaskService", sqlite3.Connection, dict[str, Any]], dict[str, Any]]
 OPERATIONS: dict[str, tuple[str, bool, Handler]] = {
+    "testing_join": ("testing.use", True, testing.join),
+    # Checks write live polling/grant state but must never use cached request receipts.
+    "testing_check": ("testing.use", False, testing.check),
+    "testing_done": ("testing.use", True, testing.done),
+    "testing_list": ("testing.read", False, testing.listing),
     "tasks_create": ("tasks.write", True, task.create),
     "tasks_list": ("tasks.read", False, task.listing),
     "tasks_get": ("tasks.read", False, task.get),
